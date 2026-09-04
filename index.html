@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ckb" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Attendance Scanner (Cloud Sync)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Supabase Library -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800 p-3 sm:p-6 font-sans">
+  <div class="max-w-xl mx-auto space-y-4">
+
+    <!-- Header -->
+    <header class="bg-slate-900 text-white p-5 rounded-2xl shadow flex justify-between items-center">
+      <div>
+        <h1 class="text-lg font-bold">سکانی ڕاستەوخۆ (Live Cloud Scan)</h1>
+        <p class="text-xs text-slate-400">بەستراوەتەوە بە داتابەیسی هەورەوە</p>
+      </div>
+    </header>
+
+    <!-- Setup / API Keys -->
+    <div id="setupSection" class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 text-sm space-y-3">
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 mb-1">کلیلەی Gemini API (بۆ خوێندنەوەی وێنە):</label>
+        <input type="password" id="geminiKeyInput" placeholder="AIzaSy..." class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500" />
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 mb-1">کلیلەی Supabase (بۆ داتابەیس):</label>
+        <input type="password" id="supabaseKeyInput" placeholder="sb_publishable_..." class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500" />
+      </div>
+      <button onclick="saveKeysAndConnect()" class="w-full bg-slate-800 hover:bg-slate-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold shadow transition">
+        پاشەکەوتکردن و بەستنەوە (Save & Connect)
+      </button>
+      <p id="dbStatus" class="text-xs text-slate-500 text-center font-bold bg-slate-50 p-2 rounded-lg border border-slate-100">
+        چاوەڕێی بەستنەوەیە... (Waiting for keys)
+      </p>
+    </div>
+
+    <!-- Live Scanner View -->
+    <div id="scannerSection" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden relative">
+      <div class="relative w-full bg-black aspect-[3/4] flex items-center justify-center overflow-hidden">
+        <video id="liveVideo" autoplay playsinline class="absolute min-w-full min-h-full object-cover opacity-90"></video>
+        
+        <div class="absolute inset-0 border-4 border-emerald-500/50 m-6 rounded-xl pointer-events-none flex flex-col justify-between p-4">
+           <div class="w-full flex justify-between">
+              <div class="w-6 h-6 border-t-4 border-r-4 border-emerald-500"></div>
+              <div class="w-6 h-6 border-t-4 border-l-4 border-emerald-500"></div>
+           </div>
+           <div class="text-center text-emerald-400 font-bold text-sm bg-black/40 py-1 rounded">خشتەکە لێرە ڕێکبخە</div>
+           <div class="w-full flex justify-between">
+              <div class="w-6 h-6 border-b-4 border-r-4 border-emerald-500"></div>
+              <div class="w-6 h-6 border-b-4 border-l-4 border-emerald-500"></div>
+           </div>
+        </div>
+      </div>
+
+      <div class="p-4 flex flex-col gap-3">
+        <button onclick="startCamera()" id="startCamBtn" class="w-full bg-blue-100 text-blue-700 py-3 rounded-xl font-bold text-sm transition">
+          کردنەوەی کامێرا (Open Camera)
+        </button>
+        <button onclick="captureAndAnalyze()" id="scanBtn" class="hidden w-full bg-emerald-600 hover:bg-emerald-700 text-white py-4 rounded-xl font-bold text-lg shadow-lg transition flex justify-center items-center gap-2">
+          سکانکردن (Scan Register)
+        </button>
+      </div>
+      <canvas id="hiddenCanvas" class="hidden"></canvas>
+    </div>
+
+    <!-- Processing Overlay -->
+    <div id="loadingBox" class="hidden bg-blue-50 border border-blue-200 text-blue-800 text-sm font-medium p-4 rounded-2xl text-center flex-col items-center justify-center gap-3">
+      <svg class="animate-spin h-6 w-6 text-blue-600 mx-auto" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+      </svg>
+      <span>خەریکی دۆزینەوەی غائیبەکانە... (Detecting...)</span>
+    </div>
+
+    <!-- Review & Confirm Section -->
+    <div id="reviewSection" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+      <div class="bg-amber-100 p-4 border-b border-amber-200">
+        <h2 class="font-bold text-amber-900">پێداچوونەوە (Review & Confirm)</h2>
+        <p class="text-xs text-amber-700 mt-1">ئەگەر هەڵەیەک هەیە، دەتوانیت لایبەریت پێش ناردنی نامەکان.</p>
+      </div>
+      <div id="reviewList" class="divide-y divide-slate-100 p-2"></div>
+      <div class="p-4 bg-slate-50 border-t border-slate-100">
+        <button onclick="confirmResults()" class="w-full bg-slate-900 text-white py-3 rounded-xl font-bold shadow transition">
+          دڵنیام، بەردەوام بە (Confirm & Proceed)
+        </button>
+      </div>
+    </div>
+
+    <!-- Final Result Section -->
+    <div id="finalSection" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+      <div class="p-4 border-b border-slate-100 flex justify-between items-center bg-emerald-50">
+        <h2 class="font-bold text-sm text-emerald-900">ئامادەنەبووەکان پشتڕاستکرانەوە</h2>
+        <button onclick="resetApp()" class="text-xs text-emerald-700 font-semibold underline">سکانی نوێ (New Scan)</button>
+      </div>
+      <div id="finalList" class="divide-y divide-slate-100"></div>
+    </div>
+
+  </div>
+
+  <script>
+    // Database Setup - Automatically linked to your project
+    const SUPABASE_URL = 'https://abochdzpfuiqzbazeapr.supabase.co';
+    let supabaseClient = null;
+    let PARENT_CONTACTS = {};
+    let rosterData = [];
+
+    const geminiInput = document.getElementById('geminiKeyInput');
+    const supabaseInput = document.getElementById('supabaseKeyInput');
+    const dbStatus = document.getElementById('dbStatus');
+
+    // Load saved keys
+    geminiInput.value = localStorage.getItem('gemini_api_key') || '';
+    supabaseInput.value = localStorage.getItem('supabase_api_key') || '';
+
+    async function saveKeysAndConnect() {
+      const gKey = geminiInput.value.trim();
+      const sKey = supabaseInput.value.trim();
+      
+      localStorage.setItem('gemini_api_key', gKey);
+      localStorage.setItem('supabase_api_key', sKey);
+
+      if (!sKey) {
+        dbStatus.textContent = "تکایە کلیلەی Supabase بنووسە ❌";
+        return;
+      }
+
+      dbStatus.textContent = "خەریکی هێنانی داتا لە هەورەوە... (Connecting...)";
+      dbStatus.className = "text-xs text-blue-600 text-center font-bold bg-blue-50 p-2 rounded-lg border border-blue-100 mt-3";
+
+      // Initialize Supabase
+      supabaseClient = supabase.createClient(SUPABASE_URL, sKey);
+
+      try {
+        const { data, error } = await supabaseClient.from('students').select('*');
+        if (error) throw error;
+
+        rosterData = data;
+        PARENT_CONTACTS = {};
+        
+        // Match the serial numbers to the phone numbers from your database
+        data.forEach(student => {
+          PARENT_CONTACTS[student.serial] = student.parent_phone;
+        });
+
+        dbStatus.textContent = `داتابەیس بەستراوە ✅ (${data.length} قوتابی هێنرا)`;
+        dbStatus.className = "text-xs text-emerald-600 text-center font-bold bg-emerald-50 p-2 rounded-lg border border-emerald-100 mt-3";
+        
+        document.getElementById('scannerSection').classList.remove('hidden');
+
+      } catch (err) {
+        dbStatus.textContent = "هەڵە هەیە لە بەستنەوەی داتابەیس ❌ دڵنیابە لە کلیلەکە";
+        dbStatus.className = "text-xs text-rose-600 text-center font-bold bg-rose-50 p-2 rounded-lg border border-rose-100 mt-3";
+        console.error(err);
+      }
+    }
+
+    // Camera & Scanner Logic
+    const video = document.getElementById('liveVideo');
+    const canvas = document.getElementById('hiddenCanvas');
+    let videoStream = null;
+    let temporaryResults = [];
+
+    async function startCamera() {
+      try {
+        videoStream = await navigator.mediaDevices.getUserMedia({ 
+          video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } 
+        });
+        video.srcObject = videoStream;
+        document.getElementById('startCamBtn').classList.add('hidden');
+        document.getElementById('scanBtn').classList.remove('hidden');
+      } catch (err) {
+        alert("ناتوانێت کامێرا بکاتەوە. " + err.message);
+      }
+    }
+
+    function stopCamera() {
+      if (videoStream) {
+        videoStream.getTracks().forEach(track => track.stop());
+        video.srcObject = null;
+      }
+      document.getElementById('startCamBtn').classList.remove('hidden');
+      document.getElementById('scanBtn').classList.add('hidden');
+    }
+
+    async function captureAndAnalyze() {
+      const gKey = geminiInput.value.trim();
+      if (!gKey) return alert('تکایە کلیلەی Gemini API بنووسە');
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const base64Image = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+      
+      document.getElementById('scannerSection').classList.add('hidden');
+      document.getElementById('loadingBox').classList.remove('hidden');
+      document.getElementById('loadingBox').classList.add('flex');
+      stopCamera();
+
+      try {
+        temporaryResults = await sendToGemini(gKey, base64Image);
+        showReviewScreen();
+      } catch (error) {
+        alert("هەڵە ڕوویدا: " + error.message);
+        resetApp();
+      }
+    }
+
+    async function sendToGemini(apiKey, base64Data) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`;
+      const prompt = `
+      You are an accurate school attendance recognition system. Look at this Kurdish school register sheet.
+      Find all students who have an 'X' (cross mark) in ANY of the lesson columns 1 through 7.
+      Return ONLY a JSON array with this structure:
+      [ { "serial": "4179608", "name": "ئەوزام بهجت محەمەد حسن", "absent_lessons": [1] } ]
+      Return raw JSON only. Do not include markdown blocks.
+      `;
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [ { text: prompt }, { inline_data: { mime_type: "image/jpeg", data: base64Data } } ] }]
+        })
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+      const json = await res.json();
+      const text = json.candidates[0].content.parts[0].text;
+      return JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+    }
+
+    function showReviewScreen() {
+      document.getElementById('loadingBox').classList.add('hidden');
+      document.getElementById('loadingBox').classList.remove('flex');
+      document.getElementById('reviewSection').classList.remove('hidden');
+      
+      const reviewList = document.getElementById('reviewList');
+      reviewList.innerHTML = '';
+
+      if (temporaryResults.length === 0) {
+        reviewList.innerHTML = `<p class="p-4 text-sm text-center text-slate-500">هیچ غائیبێک نەدۆزرایەوە (No absentees detected).</p>`;
+        return;
+      }
+
+      temporaryResults.forEach((student, index) => {
+        const div = document.createElement('div');
+        div.className = "flex items-center justify-between p-3 hover:bg-slate-50";
+        div.innerHTML = `
+          <div class="flex items-center gap-3">
+            <input type="checkbox" id="check_${index}" checked class="w-5 h-5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500" />
+            <label for="check_${index}" class="text-sm font-bold text-slate-800">
+              ${student.name} <br>
+              <span class="text-xs text-rose-500 font-medium">وانەی: ${student.absent_lessons.join(', ')}</span>
+            </label>
+          </div>
+        `;
+        reviewList.appendChild(div);
+      });
+    }
+
+    function confirmResults() {
+      const finalAbsentees = temporaryResults.filter((_, index) => {
+        return document.getElementById(`check_${index}`).checked;
+      });
+
+      document.getElementById('reviewSection').classList.add('hidden');
+      document.getElementById('finalSection').classList.remove('hidden');
+
+      const finalList = document.getElementById('finalList');
+      finalList.innerHTML = '';
+
+      finalAbsentees.forEach(student => {
+        // Look up phone number from the database data
+        const phone = PARENT_CONTACTS[student.serial] || "9647500000000";
+        const msg = `بەڕێز بەخێوکەری قوتابی (${student.name})، ئاگادارتان دەکەینەوە کە قوتابی ئەمڕۆ لە وانەی (${student.absent_lessons.join('، ')}) ئامادەنەبووە.`;
+        const waLink = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+
+        finalList.innerHTML += `
+          <div class="p-4 flex items-center justify-between bg-white">
+            <div>
+              <p class="text-sm font-bold text-slate-900">${student.name}</p>
+              <p class="text-xs text-slate-400">سەریال: ${student.serial}</p>
+            </div>
+            <a href="${waLink}" target="_blank" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-4 py-2 rounded-xl font-bold shadow transition">
+              نامە بۆ باوان (Notify)
+            </a>
+          </div>
+        `;
+      });
+    }
+
+    function resetApp() {
+      temporaryResults = [];
+      document.getElementById('finalSection').classList.add('hidden');
+      document.getElementById('reviewSection').classList.add('hidden');
+      document.getElementById('loadingBox').classList.add('hidden');
+      document.getElementById('scannerSection').classList.remove('hidden');
+    }
+  </script>
+</body>
+</html>
